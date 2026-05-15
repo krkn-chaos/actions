@@ -68,7 +68,7 @@ jobs:
               }
             }
 
-            async function handlePR(prNumber, author) {
+            async function handlePR(prNumber, author, baseBranch) {
               const unsigned = await getUnsignedCommits(prNumber);
               const alreadyLabeled = await hasLabel(prNumber);
               const existingComment = await findBotComment(prNumber);
@@ -97,7 +97,7 @@ jobs:
                     issue_number: prNumber,
                     body: [
                       COMMENT_MARKER,
-                      `Hi @${author}! :wave: One or more commits in this PR are missing a \`Signed-off-by\` line, which is required by our [DCO policy](https://developercertificate.org/).`,
+                      `Hi @${author}! :wave: One or more commits in this PR are missing a \`Signed-off-by\` line, which is required by our [DCO policy](https://krkn-chaos.dev/docs/contribution-guidelines/git-pointers/#developers-certificate-of-origin).`,
                       ``,
                       `**Unsigned commits:**`,
                       commitList,
@@ -110,7 +110,7 @@ jobs:
                       ``,
                       `Or, to sign off every commit in this PR at once:`,
                       `\`\`\`bash`,
-                      `git rebase origin/main --signoff`,
+                      `git rebase origin/${baseBranch} --signoff`,
                       `git push --force-with-lease`,
                       `\`\`\``,
                       ``,
@@ -118,8 +118,8 @@ jobs:
                       ``,
                       `> **Note:** Please make sure your PR contains only **1 commit** before signing off. If you have multiple commits, squash them first:`,
                       `> \`\`\`bash`,
-                      `> git rebase -i origin/main   # mark all but the first as 'squash'`,
-                      `> git commit --amend -s        # add Signed-off-by to the squashed commit`,
+                      `> git rebase -i origin/${baseBranch}   # mark all but the first as 'squash'`,
+                      `> git commit --amend -s                 # add Signed-off-by to the squashed commit`,
                       `> git push --force-with-lease`,
                       `> \`\`\``,
                       ``,
@@ -153,27 +153,29 @@ jobs:
             if (context.eventName === 'pull_request_target') {
               const prNumber = context.payload.pull_request.number;
               const author = context.payload.pull_request.user.login;
+              const baseBranch = context.payload.pull_request.base.ref;
               core.info(`Triggered by PR #${prNumber} (${context.payload.action})`);
               try {
-                await handlePR(prNumber, author);
+                await handlePR(prNumber, author, baseBranch);
               } catch (e) {
                 core.warning(`PR #${prNumber}: unexpected error — ${e.message}`);
               }
 
             } else if (context.eventName === 'push') {
-              core.info('Triggered by push to main — checking all open PRs');
+              const pushedBranch = context.ref.replace('refs/heads/', '');
+              core.info(`Triggered by push to ${pushedBranch} — checking all open PRs`);
               const prs = await github.paginate(github.rest.pulls.list, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 state: 'open',
-                base: 'main',
+                base: pushedBranch,
               });
-              core.info(`Found ${prs.length} open PRs targeting main`);
+              core.info(`Found ${prs.length} open PRs targeting ${pushedBranch}`);
               const CONCURRENCY = 5;
               for (let i = 0; i < prs.length; i += CONCURRENCY) {
                 const batch = prs.slice(i, i + CONCURRENCY);
                 await Promise.all(batch.map(pr =>
-                  handlePR(pr.number, pr.user.login).catch(e =>
+                  handlePR(pr.number, pr.user.login, pr.base.ref).catch(e =>
                     core.warning(`PR #${pr.number}: unexpected error — ${e.message}`)
                   )
                 ));
