@@ -134,7 +134,7 @@ jobs:
                   });
                   core.info(`PR #${prNumber}: posted needs-dco comment`);
                 }
-                core.setFailed(`PR #${prNumber}: ${unsigned.length} commit(s) are missing a Signed-off-by line`);
+                return unsigned.length;
               } else {
                 if (alreadyLabeled) {
                   await github.rest.issues.removeLabel({
@@ -155,6 +155,7 @@ jobs:
                   core.info(`PR #${prNumber}: removed needs-dco comment`);
                 }
               }
+              return 0;
             }
 
             if (context.eventName === 'pull_request_target') {
@@ -163,7 +164,10 @@ jobs:
               const baseBranch = context.payload.pull_request.base.ref;
               core.info(`Triggered by PR #${prNumber} (${context.payload.action})`);
               try {
-                await handlePR(prNumber, author, baseBranch);
+                const unsignedCount = await handlePR(prNumber, author, baseBranch);
+                if (unsignedCount > 0) {
+                  core.setFailed(`${unsignedCount} commit(s) are missing a Signed-off-by line`);
+                }
               } catch (e) {
                 core.warning(`PR #${prNumber}: unexpected error — ${e.message}`);
               }
