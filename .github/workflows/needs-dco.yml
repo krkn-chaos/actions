@@ -118,16 +118,23 @@ jobs:
                       ``,
                       `> **Note:** Please make sure your PR contains only **1 commit** before signing off. If you have multiple commits, squash them first:`,
                       `> \`\`\`bash`,
-                      `> git rebase -i origin/${baseBranch}   # mark all but the first as 'squash'`,
-                      `> git commit --amend -s                 # add Signed-off-by to the squashed commit`,
-                      `> git push --force-with-lease`,
+                      `> git checkout <my-working-branch>`,
+                      `> git rebase -i HEAD~<num_of_commits_to_merge>`,
+                      `>    -OR-`,
+                      `> git rebase -i <commit_id_of_first_change_commit>`,
                       `> \`\`\``,
+                      `> In the interactive rebase screen, set the first commit to \`pick\` and all others to \`squash\`. Then push your rebased commits:`,
+                      `> \`\`\`bash`,
+                      `> git push origin <my-working-branch> --force-with-lease`,
+                      `> \`\`\``,
+                      `> See the [Squash Commits](https://krkn-chaos.dev/docs/contribution-guidelines/git-pointers/#squash-commits) guide for more details.`,
                       ``,
                       `The \`${LABEL}\` label and this comment will be removed automatically once all commits are signed off.`,
                     ].join('\n'),
                   });
                   core.info(`PR #${prNumber}: posted needs-dco comment`);
                 }
+                core.setFailed(`PR #${prNumber}: ${unsigned.length} commit(s) are missing a Signed-off-by line`);
               } else {
                 if (alreadyLabeled) {
                   await github.rest.issues.removeLabel({
