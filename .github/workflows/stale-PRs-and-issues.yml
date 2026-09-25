@@ -23,6 +23,10 @@ jobs:
             const STALE_APPROVED_DAYS = 30;
             const STALE_PR_DAYS = 14;
             const STALE_PR_CLOSE_DAYS = 7;
+            const NON_COMPLIANT_REMINDER_DAYS = 7;
+            const NON_COMPLIANT_CLOSE_DAYS = 14;
+            const REVIEW_REMINDER_DAYS = 7;
+            const MAX_REVIEW_REMINDERS = 3;
           
             const MS_PER_DAY = 24 * 60 * 60 * 1000;
             const now = Date.now();
@@ -210,50 +214,129 @@ jobs:
             }
           
             // ─── Pull Requests ───
-          
+
             const prs = await github.paginate(github.rest.pulls.list, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
               per_page: 100
             });
-          
+
             for (const pr of prs) {
-              const daysSinceUpdate = daysSince(pr.updated_at);
-          
               const prComments = await github.paginate(github.rest.issues.listComments, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: pr.number,
                 per_page: 100
               });
-          
-              const reminderComment = prComments.find(c => c.body.includes(`<!-- stale-pr-reminder -->`));
-          
-              if (reminderComment) {
-                const daysSinceReminder = daysSince(reminderComment.created_at);
-                const activityAfterReminder = new Date(pr.updated_at).getTime() > new Date(reminderComment.created_at).getTime();
-          
-                if (!activityAfterReminder && daysSinceReminder >= STALE_PR_CLOSE_DAYS) {
-                  await postComment(pr.number, 'stale-pr-closed',
-                    `Closing this PR due to inactivity. Feel free to reopen when you're ready to continue. If you have any questions, please reach out in the issue thread.`
-                  );
-                  await github.rest.pulls.update({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: pr.number,
-                    state: 'closed'
-                  });
-                  console.log(`PR #${pr.number}: closed due to inactivity`);
+
+              // 1. Non-compliant PR handling (7-day reminder, 14-day auto-close)
+              const nonCompliantComment = [...prComments].reverse()
+                .find(c => c.body.includes('<!-- non-compliant-pr -->'));
+              if (nonCompliantComment) {
+                const daysSinceNonCompliant = daysSince(nonCompliantComment.created_at);
+                const activityAfter = new Date(pr.updated_at).getTime() >
+                  new Date(nonCompliantComment.created_at).getTime();
+
+                if (!activityAfter) {
+                  if (daysSinceNonCompliant >= NON_COMPLIANT_CLOSE_DAYS) {
+                    await postComment(pr.number, 'non-compliant-closed',
+                      `Closing this PR as the contribution guidelines have not been followed. Feel free to reopen once the requirements are met. See our [contribution guidelines](CONTRIBUTING.md) for details.`
+                    );
+                    await github.rest.pulls.update({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      pull_number: pr.number,
+                      state: 'closed'
+                    });
+                    console.log(`PR #${pr.number}: closed (non-compliant for ${Math.floor(daysSinceNonCompliant)} days)`);
+                  } else if (daysSinceNonCompliant >= NON_COMPLIANT_REMINDER_DAYS) {
+                    await postComment(pr.number, 'non-compliant-reminder',
+                      `Hi @${pr.user.login}, this PR still doesn't meet the contribution guidelines. Please address the missing items within 7 days, otherwise this PR will be closed. Feel free to reopen once the guidelines are followed.`
+                    );
+                    console.log(`PR #${pr.number}: non-compliant reminder sent`);
+                  }
                 }
                 continue;
               }
-          
-              if (daysSinceUpdate >= STALE_PR_DAYS) {
-                const contributor = `@${pr.user.login}`;
-                await postComment(pr.number, 'stale-pr-reminder',
-                  `Hi ${contributor}, this PR has been waiting for updates for ${Math.floor(daysSinceUpdate)} days. Please respond or push changes within 7 days, otherwise this PR will be closed. Feel free to reopen when you're ready to continue.`
-                );
-                console.log(`PR #${pr.number}: stale, reminded ${contributor}`);
+
+              // 2. Check review state to distinguish contributor vs maintainer stale
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                per_page: 100
+              });
+
+              const latestReviewByUser = {};
+              for (const review of reviews) {
+                if (review.state === 'COMMENTED' || review.state === 'PENDING') continue;
+                const prev = latestReviewByUser[review.user.login];
+                if (!prev || new Date(review.submitted_at) > new Date(prev.submitted_at)) {
+                  latestReviewByUser[review.user.login] = review;
+                }
+              }
+
+              const changesRequested = Object.values(latestReviewByUser)
+                .filter(r => r.state === 'CHANGES_REQUESTED')
+                .sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+
+              // 2a. Awaiting contributor: changes requested, no activity since
+              if (changesRequested.length > 0) {
+                const lastRequest = changesRequested[0];
+                const contributorUpdated = new Date(pr.updated_at).getTime() >
+                  new Date(lastRequest.submitted_at).getTime();
+
+                if (!contributorUpdated) {
+                  const daysSinceRequest = daysSince(lastRequest.submitted_at);
+                  const reminder = prComments.find(c =>
+                    c.body.includes('<!-- stale-pr-contributor-reminder -->'));
+
+                  if (reminder) {
+                    const daysSinceReminder = daysSince(reminder.created_at);
+
+                    if (daysSinceReminder >= STALE_PR_CLOSE_DAYS) {
+                      await postComment(pr.number, 'stale-pr-closed',
+                        `Closing this PR due to inactivity. Feel free to reopen when you're ready to continue. If you have any questions, please reach out in the issue thread.`
+                      );
+                      await github.rest.pulls.update({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        pull_number: pr.number,
+                        state: 'closed'
+                      });
+                      console.log(`PR #${pr.number}: closed (contributor inactive after changes requested)`);
+                    }
+                  } else if (daysSinceRequest >= STALE_PR_DAYS) {
+                    await postComment(pr.number, 'stale-pr-contributor-reminder',
+                      `Hi @${pr.user.login}, this PR has had changes requested for ${Math.floor(daysSinceRequest)} days with no updates. Please respond or push changes within ${STALE_PR_CLOSE_DAYS} days, otherwise this PR will be closed. Feel free to reopen when you're ready to continue.`
+                    );
+                    console.log(`PR #${pr.number}: reminded contributor (changes requested ${Math.floor(daysSinceRequest)} days ago)`);
+                  }
+                }
+                continue;
+              }
+
+              // 2b. Awaiting maintainer review (gentle reminders, max 3)
+              const daysSinceUpdate = daysSince(pr.updated_at);
+              if (daysSinceUpdate >= REVIEW_REMINDER_DAYS) {
+                const reviewReminders = prComments.filter(c =>
+                  c.body.includes('<!-- review-reminder -->'));
+                const lastReminder = reviewReminders.length > 0
+                  ? reviewReminders[reviewReminders.length - 1]
+                  : null;
+
+                const shouldRemind = reviewReminders.length < MAX_REVIEW_REMINDERS &&
+                  (!lastReminder || daysSince(lastReminder.created_at) >= REVIEW_REMINDER_DAYS);
+
+                if (shouldRemind) {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.number,
+                    body: `<!-- review-reminder -->\nGentle reminder: this PR has been awaiting review for ${Math.floor(daysSinceUpdate)} days. ${reviewers} could you take a look when you get a chance?`
+                  });
+                  console.log(`PR #${pr.number}: review reminder #${reviewReminders.length + 1} sent`);
+                }
               }
             }

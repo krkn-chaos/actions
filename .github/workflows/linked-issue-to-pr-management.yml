@@ -102,12 +102,14 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
             const prCreator = pr.user.login;
+            const isFastLane = ['MEMBER', 'OWNER', 'COLLABORATOR']
+              .includes(pr.author_association);
 
             const linkedIssueCount = parseInt(process.env.LINKED_ISSUES_COUNT || '0');
             const issuesOutput = process.env.ISSUES_OUTPUT || '[]';
 
             if (linkedIssueCount === 0) {
-              const comment = `Thanks for your contribution! This PR does not appear to have a linked issue. Please refer to our [contribution guidelines](CONTRIBUTING.md) for the proper PR process.`;
+              const comment = `<!-- non-compliant-pr -->\nThanks for your contribution! This PR does not appear to have a linked issue. Please refer to our [contribution guidelines](CONTRIBUTING.md) for the proper PR process.`;
 
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -150,10 +152,19 @@ jobs:
                 issue_number: issueNumber
               });
 
+              const issueLabels = issue.labels.map(l => l.name);
+              const isApproved = issueLabels.includes('triage/accepted') || issueLabels.includes('bug');
               const issueAssignees = issue.assignees.map(a => a.login);
+              const isAssigned = issueAssignees.includes(prCreator);
 
-              if (!issueAssignees.includes(prCreator)) {
-                const comment = `Thanks for your contribution! However, this PR is linked to issue #${issueNumber}, which is not assigned to you. Please refer to our [contribution guidelines](CONTRIBUTING.md). PRs should only be opened by contributors who are assigned to the linked issue.`;
+              if (!isFastLane && (!isApproved || !isAssigned)) {
+                const checklist = [
+                  `- [x] PR references a linked issue`,
+                  `- [${isApproved ? 'x' : ' '}] Linked issue has maintainer approval (\`triage/accepted\` or \`bug\` label)`,
+                  `- [${isAssigned ? 'x' : ' '}] You are assigned to the linked issue`
+                ].join('\n');
+
+                const comment = `<!-- non-compliant-pr -->\nThanks for your contribution! Before this PR can be reviewed, please ensure the following:\n\n${checklist}\n\nPlease see our [contribution guidelines](CONTRIBUTING.md) for details. This PR will be auto-closed if not addressed within 14 days.`;
 
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
@@ -162,7 +173,7 @@ jobs:
                   body: comment
                 });
 
-                console.log(`PR creator ${prCreator} is not assigned to issue #${issueNumber}`);
+                console.log(`PR #${pr.number} non-compliant: approved=${isApproved}, assigned=${isAssigned}`);
                 return;
               }
 
