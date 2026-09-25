@@ -102,6 +102,8 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
             const prCreator = pr.user.login;
+            const isFastLane = ['MEMBER', 'OWNER', 'COLLABORATOR']
+              .includes(pr.author_association);
 
             const linkedIssueCount = parseInt(process.env.LINKED_ISSUES_COUNT || '0');
             const issuesOutput = process.env.ISSUES_OUTPUT || '[]';
@@ -151,8 +153,8 @@ jobs:
               });
 
               const issueAssignees = issue.assignees.map(a => a.login);
-
-              if (!issueAssignees.includes(prCreator)) {
+              
+              if (!isFastLane && !issueAssignees.includes(prCreator)) {
                 const comment = `Thanks for your contribution! However, this PR is linked to issue #${issueNumber}, which is not assigned to you. Please refer to our [contribution guidelines](CONTRIBUTING.md). PRs should only be opened by contributors who are assigned to the linked issue.`;
 
                 await github.rest.issues.createComment({
