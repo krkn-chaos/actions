@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Request issue approval and assignment
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env: 
           REVIEWERS: "krkn-maintainers"
         with:
@@ -85,14 +85,14 @@ jobs:
 
     steps:
       - name: Check linked issue and assign reviewers
-        uses: nearform-actions/github-action-check-linked-issues@v1
+        uses: nearform-actions/github-action-check-linked-issues@da25b46705a9da660023ab77cb0e5672a65e2910 # v1
         continue-on-error: true
         id: check-linked-issues
         with:
           exclude-branches: "release/**, dependabot/**"
           comment: false
       - name: Assign reviewers based on linked issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           LINKED_ISSUES_COUNT: ${{ steps.check-linked-issues.outputs.linked_issues_count }}
           ISSUES_OUTPUT: ${{ steps.check-linked-issues.outputs.issues }}
